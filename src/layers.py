@@ -13,7 +13,7 @@ import math
 	Modified from https://github.com/YingtongDou/CARE-GNN
 
 	TCC Extension (PC-GNN-ATT):
-	IntraAggAtt replaces the mean aggregator (Eq. 8) with a single-head GAT-style
+	IntraAggAtt replaces the mean aggregator (Eq. 8) with single-head dot-product
 	attention mechanism applied AFTER the Choose step. This tests the hypothesis that
 	attention over already-filtered neighbors (class imbalance already handled by Choose)
 	outperforms plain mean aggregation.
@@ -268,6 +268,8 @@ class IntraAggAtt(nn.Module):
 
 		# d': attention projection dimension — derived from actual feat_dim at construction time
 		self.attn_dim = attn_dim if attn_dim is not None else max(feat_dim // 2, 1)
+		if isinstance(self.attn_dim, bool) or not isinstance(self.attn_dim, int) or self.attn_dim < 1:
+			raise ValueError('attn_dim must be a positive integer')
 
 		# W_q: Query projection  (d' x feat_dim)
 		self.W_q = nn.Parameter(torch.FloatTensor(self.attn_dim, self.feat_dim))
@@ -317,17 +319,7 @@ class IntraAggAtt(nn.Module):
 
 		# ── Build binary adjacency mask (same as IntraAgg) ───────────────────
 		# mask[i, j] = 1  iff unique node j is a filtered neighbor of batch node i
-		# Guard against the edge case where every batch node has an empty neighbor
-		# set (can happen in the no-Choose ablation on very sparse graphs).
-		if all(len(s) == 0 for s in samp_neighs):
-			# No neighbors at all: return zero embeddings with the right shape
-			if self.cuda:
-				zero_feats = self.features(torch.LongTensor(nodes).cuda()) * 0
-			else:
-				zero_feats = self.features(torch.LongTensor(nodes)) * 0
-			return F.relu(torch.cat((zero_feats, zero_feats), dim=1).mm(self.weight)), samp_scores
-
-		unique_nodes_list = list(set.union(*samp_neighs))
+		unique_nodes_list = list(set().union(*samp_neighs))
 		unique_nodes = {n: i for i, n in enumerate(unique_nodes_list)}
 
 		mask = Variable(torch.zeros(len(samp_neighs), len(unique_nodes)))
@@ -346,6 +338,11 @@ class IntraAggAtt(nn.Module):
 			embed_matrix = self.features(torch.LongTensor(unique_nodes_list))
 
 		# ── Scaled dot-product attention ──────────────────────────────────────
+		if not unique_nodes_list:
+			agg_feats = torch.zeros_like(self_feats)
+			cat_feats = torch.cat((self_feats, agg_feats), dim=1)
+			return F.relu(cat_feats.mm(self.weight)), samp_scores
+
 		# Q: queries from batch nodes     (batch    x d')
 		# K: keys   from unique neighbors (unique   x d')
 		# V: values = raw features h_u   (unique   x feat_dim)  [no extra projection]
@@ -358,15 +355,13 @@ class IntraAggAtt(nn.Module):
 
 		# Mask out non-neighbor positions with -inf so softmax gives them weight 0
 		scores = scores.masked_fill(mask == 0, float('-inf'))
+		empty_rows = mask.sum(dim=1, keepdim=True) == 0
+		scores = scores.masked_fill(empty_rows, 0.0)
 
 		# Row-wise softmax: alpha[i, j] = attention weight of node i over neighbor j
 		alpha = F.softmax(scores, dim=1)       # (batch x unique)
 
-		# Replace any NaN rows (nodes with zero filtered neighbors) with zeros.
-		# torch.nan_to_num requires PyTorch >= 1.8; use a mask-based guard for
-		# compatibility with the repo's declared torch==1.4.0 requirement.
-		nan_mask = alpha != alpha  # True where alpha is NaN (all-inf softmax row)
-		alpha = alpha.masked_fill(nan_mask, 0.0)
+		alpha = alpha.masked_fill(mask == 0, 0.0)
 
 		# Weighted aggregation — V = embed_matrix (raw h_u), preserves feat_dim
 		agg_feats = alpha.mm(embed_matrix)     # (batch x feat_dim)
