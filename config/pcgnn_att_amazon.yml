@@ -1,0 +1,46 @@
+# Data
+data_name: 'amazon'
+data_dir: './data/'
+train_ratio: 0.4
+test_ratio: 0.67
+save_dir: './pytorch_models/'
+
+# Model
+model: 'PCGNN-ATT'
+multi_relation: 'GNN'
+
+# Model architecture
+emb_size: 64
+
+thres: 0.4
+
+rho: 0.5
+
+# attn_dim is intentionally omitted here.
+# IntraAggAtt defaults to feat_dim // 2 from feat_data.shape[1] at runtime.
+# attn_dim: 12   # uncomment to override
+
+seed: 72
+
+# Run multiple times with different random seeds (uncomment for multi_run)
+# seed:
+#     - 42
+#     - 448
+#     - 854
+#     - 29493
+#     - 88867
+
+
+# hyper-parameters
+optimizer: 'adam'
+lr: 0.005
+weight_decay: 0.0005
+batch_size: 256
+num_epochs: 51
+valid_epochs: 5
+alpha: 2
+
+
+# Device
+no_cuda: True
+cuda_id: '2'

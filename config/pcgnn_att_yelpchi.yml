@@ -1,0 +1,48 @@
+# Data
+data_name: 'yelp'
+data_dir: './data/'
+train_ratio: 0.4
+test_ratio: 0.67
+save_dir: './pytorch_models/'
+
+# Model
+model: 'PCGNN-ATT'
+multi_relation: 'GNN'
+
+# Model architecture
+emb_size: 64
+
+thres: 0.5
+
+rho: 0.5
+
+# attn_dim is intentionally omitted here.
+# IntraAggAtt will default to feat_dim // 2, computed from feat_data.shape[1]
+# at runtime — so this config works for both the 32-dim and 100-dim YelpChi
+# feature versions without change. See layers.py IntraAggAtt.__init__.
+# attn_dim: 16   # uncomment to override (e.g. for ablation over attn_dim)
+
+seed: 72
+
+# Run multiple times with different random seeds (uncomment for multi_run)
+# seed:
+#     - 42
+#     - 448
+#     - 854
+#     - 29493
+#     - 88867
+
+
+# hyper-parameters
+optimizer: 'adam'
+lr: 0.01
+weight_decay: 0.001
+batch_size: 1024
+num_epochs: 51
+valid_epochs: 5
+alpha: 2
+
+
+# Device
+no_cuda: True
+cuda_id: '2'

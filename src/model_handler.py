@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 
 from src.utils import test_pcgnn, test_sage, load_data, pos_neg_split, normalize, pick_step
 from src.model import PCALayer
-from src.layers import InterAgg, IntraAgg
+from src.layers import InterAgg, IntraAgg, IntraAggAtt
 from src.graphsage import *
 
 
@@ -89,11 +89,35 @@ class ModelHandler(object):
 			features.cuda()
 
 		# build one-layer models
+		attn_dim = getattr(args, 'attn_dim', None)  # optional; IntraAggAtt defaults to feat_dim // 2
+
 		if args.model == 'PCGNN':
 			intra1 = IntraAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'], args.rho, cuda=args.cuda)
 			intra2 = IntraAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'], args.rho, cuda=args.cuda)
 			intra3 = IntraAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'], args.rho, cuda=args.cuda)
-			inter1 = InterAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'], 
+			inter1 = InterAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+							  adj_lists, [intra1, intra2, intra3], inter=args.multi_relation, cuda=args.cuda)
+
+		elif args.model == 'PCGNN-ATT':
+			# TCC contribution: GAT-style attention aggregator (Choose step preserved)
+			intra1 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=True, attn_dim=attn_dim)
+			intra2 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=True, attn_dim=attn_dim)
+			intra3 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=True, attn_dim=attn_dim)
+			inter1 = InterAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+							  adj_lists, [intra1, intra2, intra3], inter=args.multi_relation, cuda=args.cuda)
+
+		elif args.model == 'PCGNN-ATT-NC':
+			# Ablation: attention WITHOUT Choose (to isolate Choose's contribution)
+			intra1 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=False, attn_dim=attn_dim)
+			intra2 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=False, attn_dim=attn_dim)
+			intra3 = IntraAggAtt(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
+								  args.rho, cuda=args.cuda, use_choose=False, attn_dim=attn_dim)
+			inter1 = InterAgg(features, feat_data.shape[1], args.emb_size, self.dataset['train_pos'],
 							  adj_lists, [intra1, intra2, intra3], inter=args.multi_relation, cuda=args.cuda)
 		elif args.model == 'SAGE':
 			agg_sage = MeanAggregator(features, cuda=args.cuda)
@@ -102,7 +126,7 @@ class ModelHandler(object):
 			agg_gcn = GCNAggregator(features, cuda=args.cuda)
 			enc_gcn = GCNEncoder(features, feat_data.shape[1], args.emb_size, adj_lists, agg_gcn, gcn=True, cuda=args.cuda)
 
-		if args.model == 'PCGNN':
+		if args.model in ('PCGNN', 'PCGNN-ATT', 'PCGNN-ATT-NC'):
 			gnn_model = PCALayer(2, inter1, args.alpha)
 		elif args.model == 'SAGE':
 			# the vanilla GraphSAGE model as baseline
@@ -155,7 +179,7 @@ class ModelHandler(object):
 
 			# Valid the model for every $valid_epoch$ epoch
 			if epoch % args.valid_epochs == 0:
-				if args.model == 'SAGE' or args.model == 'GCN':
+				if args.model in ('SAGE', 'GCN'):
 					print("Valid at epoch {}".format(epoch))
 					f1_mac_val, f1_1_val, f1_0_val, auc_val, gmean_val = test_sage(idx_valid, y_valid, gnn_model, args.batch_size, args.thres)
 					if auc_val > auc_best:
@@ -177,7 +201,7 @@ class ModelHandler(object):
 		print("Restore model from epoch {}".format(ep_best))
 		print("Model path: {}".format(path_saver))
 		gnn_model.load_state_dict(torch.load(path_saver))
-		if args.model == 'SAGE' or args.model == 'GCN':
+		if args.model in ('SAGE', 'GCN'):
 			f1_mac_test, f1_1_test, f1_0_test, auc_test, gmean_test = test_sage(idx_test, y_test, gnn_model, args.batch_size, args.thres)
 		else:
 			f1_mac_test, f1_1_test, f1_0_test, auc_test, gmean_test = test_pcgnn(idx_test, y_test, gnn_model, args.batch_size, args.thres)
